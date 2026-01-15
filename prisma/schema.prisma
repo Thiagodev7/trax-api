@@ -30,6 +30,7 @@ model User {
   
   // Relacionamentos
   workspaces WorkspaceMember[]
+  aiLogs      AiLog[]
 
   @@map("users")
 }
@@ -46,6 +47,7 @@ model Workspace {
   // Relacionamentos
   members     WorkspaceMember[]
   campaigns Campaign[]
+  aiLogs      AiLog[]
   
   @@map("workspaces")
 }
@@ -94,4 +96,28 @@ model WorkspaceMember {
   @@index([userId])
   @@index([workspaceId])
   @@map("workspace_members")
+}
+
+// 👇 NOVO MODEL
+model AiLog {
+  id           String   @id @default(uuid())
+  workspaceId  String
+  userId       String
+  
+  provider     String   // ex: "GEMINI", "OPENAI"
+  model        String   // ex: "gemini-2.0-flash"
+  type         String   // ex: "COPY_GENERATION"
+  
+  inputTokens  Int      // O que você enviou
+  outputTokens Int      // O que a IA respondeu
+  totalTokens  Int
+  
+  createdAt    DateTime @default(now())
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([userId])
+  @@map("ai_logs")
 }
