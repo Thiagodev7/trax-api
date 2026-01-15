@@ -3,7 +3,6 @@ export interface AiGenerationOptions {
   maxTokens?: number;
 }
 
-// 👇 Nova estrutura de resposta
 export interface AiResponse {
   content: string;
   usage: {
@@ -14,8 +13,10 @@ export interface AiResponse {
 }
 
 export interface AiProvider {
-  // 👇 Muda o retorno de Promise<string> para Promise<AiResponse>
   generateText(prompt: string, options?: AiGenerationOptions): Promise<AiResponse>;
+  
+  // 👇 Novo método no contrato
+  generateImage(prompt: string): Promise<string>; // Retorna Base64
 }
 
 export const AI_PROVIDER = 'AI_PROVIDER';

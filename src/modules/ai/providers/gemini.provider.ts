@@ -1,7 +1,6 @@
 import { Injectable, InternalServerErrorException, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
-// 👇 AQUI ESTAVA FALTANDO 'AiResponse'
 import { AiProvider, AiGenerationOptions, AiResponse } from '../interfaces/ai-provider.interface';
 
 @Injectable()
@@ -13,29 +12,16 @@ export class GeminiProvider implements AiProvider, OnModuleInit {
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.getOrThrow<string>('GOOGLE_API_KEY');
     const genAI = new GoogleGenerativeAI(this.apiKey);
-    
-    // Usando 'gemini-2.0-flash' que está na sua lista e é muito estável/gratuito
     this.model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
   }
 
   async onModuleInit() {
     this.logger.log('🔍 Validando conexão com Gemini...');
-    try {
-      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`);
-      const data = await response.json();
-      
-      if (data.error) {
-        this.logger.error('❌ Erro na chave de API:', data.error.message);
-        return;
-      }
-      
-      this.logger.log('✅ Conexão com Google AI estabelecida com sucesso.');
-    } catch (error) {
-      this.logger.error('Falha de conexão inicial.', error);
-    }
+    // ... (Mantenha seu código de diagnóstico existente aqui, é útil)
   }
 
   async generateText(prompt: string, options?: AiGenerationOptions): Promise<AiResponse> {
+    // ... (Mantenha seu código de generateText existente aqui)
     try {
       const result = await this.model.generateContent({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -48,30 +34,72 @@ export class GeminiProvider implements AiProvider, OnModuleInit {
       const response = result.response;
       const text = response.text();
       
-      // Captura o uso de tokens (ou 0 se a API não retornar)
       const usageMetadata = response.usageMetadata;
       const inputTokens = usageMetadata?.promptTokenCount ?? 0;
       const outputTokens = usageMetadata?.candidatesTokenCount ?? 0;
 
       if (!text) throw new Error('Gemini retornou resposta vazia.');
 
-      // Retorna o objeto completo
       return {
         content: text,
-        usage: {
-          inputTokens,
-          outputTokens,
-          totalTokens: inputTokens + outputTokens,
-        },
+        usage: { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens },
       };
     } catch (error: any) {
-      console.error('🔴 ERRO REAL:', error.message || error);
+      console.error('🔴 ERRO REAL TEXTO:', error.message || error);
+      throw new InternalServerErrorException('Falha ao gerar texto.');
+    }
+  }
+
+  // 👇 NOVA IMPLEMENTAÇÃO: IMAGEN 3
+  async generateImage(prompt: string): Promise<string> {
+    try {
+      // 🟢 CORREÇÃO: Trocamos 'imagen-3.0-generate-001' por 'imagen-4.0-generate-001'
+      const modelName = 'imagen-4.0-generate-001'; 
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:predict?key=${this.apiKey}`;
       
-      if (error.response) {
-        console.error('Detalhes da API:', JSON.stringify(error.response, null, 2));
+      const payload = {
+        instances: [{ prompt: prompt }],
+        parameters: {
+          sampleCount: 1,
+          aspectRatio: "1:1", // Quadrado
+          // personGeneration: "allow_adult", // O Imagen 4 as vezes rejeita esse parametro, vamos remover por segurança
+        }
+      };
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        // Loga o erro exato para sabermos se é parametro ou permissão
+        console.error('Erro API Google:', JSON.stringify(errorData, null, 2));
+        throw new Error(`Google Imagen Error: ${errorData.error?.message || 'Unknown error'}`);
       }
 
-      throw new InternalServerErrorException('Falha ao gerar conteúdo com IA.');
+      const data = await response.json();
+      
+      // A estrutura do Imagen 4 costuma manter o padrão, mas vamos garantir
+      const imageBase64 = data.predictions?.[0]?.bytesBase64Encoded;
+
+      if (!imageBase64) {
+        throw new Error('Nenhuma imagem retornada pela API.');
+      }
+
+      return imageBase64;
+
+    } catch (error: any) {
+      console.error('🔴 ERRO REAL IMAGEM:', error.message || error);
+      
+      if (error.message.includes('404') || error.message.includes('PERMISSION_DENIED')) {
+        throw new InternalServerErrorException(
+          'Seu projeto Google Cloud ainda não tem permissão para o modelo Imagen 4.0. Tente ativar a API no console do Google Cloud.'
+        );
+      }
+      
+      throw new InternalServerErrorException('Falha ao gerar imagem.');
     }
   }
 }

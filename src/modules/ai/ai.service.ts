@@ -15,7 +15,6 @@ export class AiService {
     objective: string, 
     user: ActiveUserData
   ) {
-    // 1. Descobrir Workspace
     const member = await this.prisma.workspaceMember.findFirst({
       where: { userId: user.sub },
       select: { workspaceId: true },
@@ -23,40 +22,37 @@ export class AiService {
 
     if (!member) throw new NotFoundException('Workspace não encontrado');
 
-    // 🚀 PROMPT DE ALTA PERFORMANCE
     const prompt = `
-      ATUE COMO: Um Copywriter Sênior de Resposta Direta (Direct Response) de nível mundial, especializado em alta conversão.
+      ATUE COMO: Um Diretor de Criação e Copywriter de classe mundial.
 
       CONTEXTO:
-      Estou criando uma campanha de marketing e preciso de criativos que parem o scroll (Stop the Scroll) e gerem cliques.
+      Estamos criando uma campanha visual e textual para: "${productName}".
+      Objetivo: "${objective}".
 
-      📦 PRODUTO/SERVIÇO: "${productName}"
-      🎯 OBJETIVO: "${objective}"
+      SUA TAREFA:
+      1. Escreva copies persuasivas usando gatilhos mentais.
+      2. DESCREVA detalhadamente 1 ideia de imagem visual (Image Prompt) que complemente este texto. Essa descrição será usada por uma IA geradora de imagens (como Midjourney ou DALL-E), então deve ser rica em detalhes visuais, iluminação, estilo e composição.
 
-      SUAS INSTRUÇÕES ESTRATÉGICAS:
-      1. Use a estrutura A.I.D.A. (Atenção, Interesse, Desejo, Ação) ou P.A.S. (Problema, Agitação, Solução).
-      2. Aplique Gatilhos Mentais poderosos (Curiosidade, Urgência, Autoridade ou Prova Social).
-      3. Fale sobre os BENEFÍCIOS, não apenas as características. (Transformação do cliente).
-      4. O tom deve ser magnético, persuasivo e humano. Evite clichês corporativos robóticos.
+      FORMATO DE SAÍDA (MARKDOWN):
 
-      FORMATO DE SAÍDA OBRIGATÓRIO (MARKDOWN):
+      ## ⚡ Opções de Headline
+      1. [Opção 1]
+      2. [Opção 2]
+      3. [Opção 3]
 
-      ## ⚡ Opções de Headline (Títulos)
-      1. [Focada em Curiosidade/Gancho Viral]
-      2. [Focada na Dor/Solução Imediata]
-      3. [Curta e Direta - Punchy]
+      ## 📝 Corpo do Anúncio
+      [Texto persuasivo]
 
-      ## 📝 Corpo do Anúncio (Legenda/Email)
-      [Escreva um texto curto e envolvente, de no máximo 3 parágrafos. Comece com uma pergunta ou afirmação polêmica. Termine com uma Chamada para Ação (CTA) clara e imperativa.]
+      ## 🎨 Briefing Visual (Prompt de Imagem)
+      [Descreva a imagem em inglês (pois IAs de imagem entendem melhor). Ex: "Cinematic shot of...", "Hyper-realistic close up of...", descreva a luz, as cores, o cenário e a emoção.]
     `;
 
-    // 2. Chamar IA (Aumentei um pouco a temperatura para mais criatividade)
     const response = await this.aiProvider.generateText(prompt, { 
-      temperature: 0.8, // Criatividade alta
-      maxTokens: 1500 
+      temperature: 0.8,
+      maxTokens: 2000 
     });
 
-    // 3. Salvar o Log de Consumo
+    // Log de Texto
     await this.prisma.aiLog.create({
       data: {
         userId: user.sub,
@@ -71,5 +67,37 @@ export class AiService {
     });
 
     return { result: response.content };
+  }
+
+  // 👇 NOVO MÉTODO: Geração de Imagem Real
+  async generateCampaignImage(imagePrompt: string, user: ActiveUserData) {
+    const member = await this.prisma.workspaceMember.findFirst({
+      where: { userId: user.sub },
+      select: { workspaceId: true },
+    });
+
+    if (!member) throw new NotFoundException('Workspace não encontrado');
+
+    // 1. Chama o Provider para gerar a imagem (Base64)
+    const imageBase64 = await this.aiProvider.generateImage(imagePrompt);
+
+    // 2. Log de Imagem (Custo estimado ou fixo)
+    await this.prisma.aiLog.create({
+      data: {
+        userId: user.sub,
+        workspaceId: member.workspaceId,
+        provider: 'GOOGLE_IMAGEN',
+        model: 'imagen-3.0-generate-001',
+        type: 'IMAGE_GENERATION',
+        inputTokens: imagePrompt.length, // Estimativa
+        outputTokens: 1, // 1 imagem
+        totalTokens: imagePrompt.length + 1,
+      },
+    });
+
+    return { 
+      message: 'Imagem gerada com sucesso',
+      image: `data:image/png;base64,${imageBase64}` 
+    };
   }
 }
