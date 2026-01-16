@@ -1,99 +1,150 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { IntegrationsService } from './integrations.service';
+import { PrismaService } from '../../database/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
-import { PrismaService } from '../../database/prisma.service';
 import { EncryptionService } from '../security/encryption.service';
-import { ActiveUserData } from '../iam/authentication/decorators/active-user.decorator';
-import { lastValueFrom } from 'rxjs';
+import { of } from 'rxjs';
+import { BadRequestException } from '@nestjs/common';
 
-@Injectable()
-export class IntegrationsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-    private readonly http: HttpService,
-    private readonly encryption: EncryptionService,
-  ) {}
+describe('IntegrationsService', () => {
+  let service: IntegrationsService;
+  let prisma: PrismaService;
+  let http: HttpService;
+  let encryption: EncryptionService;
 
-  /**
-   * 1. Gera a URL para o usuário iniciar o login no Facebook.
-   * O redirect_uri deve apontar para uma rota do seu Frontend (ex: /settings/integrations/callback).
-   */
-  getMetaAuthUrl() {
-    const appId = this.config.getOrThrow('META_APP_ID');
-    const redirectUri = this.config.getOrThrow('META_CALLBACK_URL');
-    const scope = 'ads_management,ads_read,pages_show_list'; 
+  // Mocks (Simulações)
+  const mockPrismaService = {
+    workspaceMember: { findFirst: jest.fn() },
+    integration: { upsert: jest.fn(), findFirst: jest.fn() },
+  };
 
-    return `https://www.facebook.com/v18.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirectUri}&scope=${scope}&state=NO_STATE_FOR_NOW`;
-  }
+  const mockConfigService = {
+    // 👇 CORREÇÃO AQUI: Adicionamos o tipo Record<string, string>
+    getOrThrow: jest.fn((key: string) => {
+      const config: Record<string, string> = {
+        'META_APP_ID': '123_APP_ID',
+        'META_APP_SECRET': '123_SECRET',
+        'META_CALLBACK_URL': 'http://front.com/callback',
+      };
+      return config[key];
+    }),
+  };
 
-  /**
-   * 2. Recebe o código (code) do Frontend, troca por Token e salva criptografado.
-   */
-  async handleMetaCallback(code: string, user: ActiveUserData) {
-    const appId = this.config.getOrThrow('META_APP_ID');
-    const appSecret = this.config.getOrThrow('META_APP_SECRET');
-    const redirectUri = this.config.getOrThrow('META_CALLBACK_URL');
+  const mockHttpService = {
+    get: jest.fn(),
+  };
 
-    // Valida Workspace
-    const member = await this.prisma.workspaceMember.findFirst({
-      where: { userId: user.sub },
+  const mockEncryptionService = {
+    encrypt: jest.fn((val) => Promise.resolve(`encrypted_${val}`)),
+    decrypt: jest.fn((val) => Promise.resolve(val.replace('encrypted_', ''))),
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        IntegrationsService,
+        { provide: PrismaService, useValue: mockPrismaService },
+        { provide: ConfigService, useValue: mockConfigService },
+        { provide: HttpService, useValue: mockHttpService },
+        { provide: EncryptionService, useValue: mockEncryptionService },
+      ],
+    }).compile();
+
+    service = module.get<IntegrationsService>(IntegrationsService);
+    prisma = module.get<PrismaService>(PrismaService);
+    http = module.get<HttpService>(HttpService);
+    encryption = module.get<EncryptionService>(EncryptionService);
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  describe('getMetaAuthUrl', () => {
+    it('deve gerar a URL correta com as variáveis de ambiente', () => {
+      const url = service.getMetaAuthUrl();
+      expect(url).toContain('client_id=123_APP_ID');
+      expect(url).toContain('redirect_uri=http://front.com/callback');
+      expect(url).toContain('scope=ads_management');
     });
-    if (!member) throw new BadRequestException('Usuário sem workspace');
+  });
 
-    try {
-      // A. Troca Code -> Access Token (Curta Duração - 1 a 2 horas)
-      const tokenUrl = `https://graph.facebook.com/v18.0/oauth/access_token?client_id=${appId}&redirect_uri=${redirectUri}&client_secret=${appSecret}&code=${code}`;
-      const { data: shortData } = await lastValueFrom(this.http.get(tokenUrl));
-      const shortLivedToken = shortData.access_token;
+  describe('handleMetaCallback', () => {
+    const mockUser = { sub: 'user-id', email: 'test@trax.com' };
+    const mockCode = 'auth-code-123';
 
-      if (!shortLivedToken) throw new Error('Falha ao obter token inicial.');
+    it('deve trocar code por token longo e salvar criptografado', async () => {
+      // 1. Simula usuário pertencendo a um workspace
+      mockPrismaService.workspaceMember.findFirst.mockResolvedValue({ workspaceId: 'ws-1' });
 
-      // B. ⭐ Troca Token Curto -> Token Longa Duração (60 dias)
-      const exchangeUrl = `https://graph.facebook.com/v18.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${appId}&client_secret=${appSecret}&fb_exchange_token=${shortLivedToken}`;
+      // 2. Simula resposta do FB para token CURTO
+      mockHttpService.get.mockImplementationOnce(() => of({ 
+        data: { access_token: 'short_token_abc' } 
+      }));
+
+      // 3. Simula resposta do FB para token LONGO (Exchange)
+      mockHttpService.get.mockImplementationOnce(() => of({ 
+        data: { access_token: 'long_token_xyz' } 
+      }));
+
+      // Executa
+      const result = await service.handleMetaCallback(mockCode, mockUser);
+
+      // Verificações
+      expect(http.get).toHaveBeenCalledTimes(2); // Chamou token curto e token longo
+      expect(encryption.encrypt).toHaveBeenCalledWith('long_token_xyz');
       
-      let finalToken = shortLivedToken;
-      try {
-        const { data: longData } = await lastValueFrom(this.http.get(exchangeUrl));
-        if (longData.access_token) {
-          finalToken = longData.access_token;
-        }
-      } catch (exchangeError) {
-        console.warn('Falha ao trocar por token de longa duração, usando o curto.', exchangeError);
-      }
-
-      // C. 🔒 CRIPTOGRAFA O TOKEN FINAL
-      const encryptedToken = await this.encryption.encrypt(finalToken);
-
-      // D. Salva no Banco (Upsert)
-      await this.prisma.integration.upsert({
+      expect(prisma.integration.upsert).toHaveBeenCalledWith(expect.objectContaining({
         where: {
           workspaceId_provider_externalId: {
-            workspaceId: member.workspaceId,
+            workspaceId: 'ws-1',
             provider: 'META',
-            externalId: 'me', // TODO: Em produção, chamar /me do Graph API para pegar o ID real do usuário
-          },
+            externalId: 'me',
+          }
         },
-        update: {
-          accessToken: encryptedToken,
-          status: 'ACTIVE',
-          updatedAt: new Date(),
-        },
-        create: {
-          workspaceId: member.workspaceId,
-          provider: 'META',
-          externalId: 'me',
-          name: 'Conta Facebook',
-          accessToken: encryptedToken,
-          status: 'ACTIVE',
-        },
+        create: expect.objectContaining({
+          accessToken: 'encrypted_long_token_xyz', // Verifica se salvou o criptografado
+        })
+      }));
+
+      expect(result).toEqual({ 
+        message: 'Facebook conectado com sucesso! Token válido por 60 dias.' 
+      });
+    });
+
+    it('deve lançar erro se usuário não tiver workspace', async () => {
+      mockPrismaService.workspaceMember.findFirst.mockResolvedValue(null);
+
+      await expect(service.handleMetaCallback(mockCode, mockUser))
+        .rejects
+        .toThrow(BadRequestException);
+    });
+  });
+
+  describe('getAdAccounts', () => {
+    const mockUser = { sub: 'user-id', email: 'test@trax.com' };
+
+    it('deve descriptografar token e buscar contas', async () => {
+      // 1. Setup do banco
+      mockPrismaService.workspaceMember.findFirst.mockResolvedValue({ workspaceId: 'ws-1' });
+      mockPrismaService.integration.findFirst.mockResolvedValue({ 
+        accessToken: 'encrypted_fake_token' 
       });
 
-      return { message: 'Facebook conectado com sucesso! Token válido por 60 dias.' };
+      // 2. Simula resposta do FB
+      const mockFbResponse = {
+        data: [{ name: 'Conta 1', account_id: 'act_123' }]
+      };
+      mockHttpService.get.mockReturnValue(of({ data: mockFbResponse }));
 
-    } catch (error: any) {
-      console.error('Erro na integração Meta:', error.response?.data || error.message);
-      throw new BadRequestException('Falha ao conectar com Facebook. Verifique o código ou tente novamente.');
-    }
-  }
-}
+      // Executa
+      const result = await service.getAdAccounts(mockUser);
+
+      // Verificações
+      expect(encryption.decrypt).toHaveBeenCalledWith('encrypted_fake_token');
+      expect(http.get).toHaveBeenCalledWith(expect.stringContaining('access_token=fake_token'));
+      expect(result).toEqual(mockFbResponse.data);
+    });
+  });
+});
