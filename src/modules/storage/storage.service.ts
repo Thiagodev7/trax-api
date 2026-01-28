@@ -2,30 +2,38 @@ import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { ConfigService } from '@nestjs/config';
-import { v4 as uuidv4 } from 'uuid';
+// ALTERAÇÃO: Import de interoperabilidade para evitar ERR_REQUIRE_ESM
+import * as uuid from 'uuid'; 
 
 @Injectable()
 export class StorageService {
-  private s3Client: S3Client;
-  private bucketName: string;
+  private readonly s3Client: S3Client;
+  private readonly bucketName: string;
   private readonly logger = new Logger(StorageService.name);
 
   constructor(private readonly configService: ConfigService) {
-    this.bucketName = this.configService.getOrThrow('R2_BUCKET_NAME');
+    this.bucketName = this.configService.getOrThrow<string>('R2_BUCKET_NAME');
 
-    // Configuração do Cliente R2 (Compatível com S3)
     this.s3Client = new S3Client({
       region: 'auto',
-      endpoint: this.configService.getOrThrow('R2_ENDPOINT'),
+      endpoint: this.configService.getOrThrow<string>('R2_ENDPOINT'),
       credentials: {
-        accessKeyId: this.configService.getOrThrow('R2_ACCESS_KEY_ID'),
-        secretAccessKey: this.configService.getOrThrow('R2_SECRET_ACCESS_KEY'),
+        accessKeyId: this.configService.getOrThrow<string>('R2_ACCESS_KEY_ID'),
+        secretAccessKey: this.configService.getOrThrow<string>('R2_SECRET_ACCESS_KEY'),
       },
     });
   }
 
+  /**
+   * Realiza o upload de assets para o Cloudflare R2.
+   * @param fileBuffer Buffer do arquivo
+   * @param fileName Nome original
+   * @param mimeType Tipo do arquivo (image/png, etc)
+   */
   async uploadFile(fileBuffer: Buffer, fileName: string, mimeType: string): Promise<string> {
-    const uniqueFileName = `${uuidv4()}-${fileName}`;
+    // Sanitização básica do nome do arquivo para evitar problemas de URL
+    const sanitizedName = fileName.replace(/\s+/g, '-').toLowerCase();
+    const uniqueFileName = `${uuid.v4()}-${sanitizedName}`;
 
     try {
       const upload = new Upload({
@@ -35,20 +43,30 @@ export class StorageService {
           Key: uniqueFileName,
           Body: fileBuffer,
           ContentType: mimeType,
-          // ACL: 'public-read', // No R2, geralmente configuramos o bucket como público no painel
         },
+        // Otimização: Define tamanho das partes para 5MB (padrão S3)
+        partSize: 5 * 1024 * 1024, 
+        queueSize: 4,
       });
 
       await upload.done();
 
-      // Monta a URL pública final
-      const publicUrl = `${this.configService.getOrThrow('R2_PUBLIC_URL')}/${uniqueFileName}`;
+      const baseUrl = this.configService.getOrThrow<string>('R2_PUBLIC_URL');
+      const publicUrl = `${baseUrl.replace(/\/$/, '')}/${uniqueFileName}`;
       
-      this.logger.log(`Arquivo enviado com sucesso: ${publicUrl}`);
+      this.logger.log(`Asset Trax armazenado: ${uniqueFileName}`);
       return publicUrl;
-    } catch (error) {
-      this.logger.error('Erro ao enviar arquivo para R2', error);
-      throw new InternalServerErrorException('Falha no upload da imagem.');
+    } catch (error: unknown) {
+      // Type Guard para garantir que acessamos propriedades de um Error real
+      const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
+      const errorStack = error instanceof Error ? error.stack : '';
+  
+      this.logger.error(
+        `Falha crítica de Storage [R2]: ${errorMessage}`,
+        errorStack
+      );
+  
+      throw new InternalServerErrorException('Não foi possível processar o upload do asset.');
     }
   }
 }
