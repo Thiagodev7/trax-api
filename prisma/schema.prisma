@@ -24,18 +24,17 @@ enum CampaignObjective {
   LEADS
 }
 
-// Novos Enums para o fluxo profissional
 enum CampaignStatus {
-  DRAFT               // Rascunho (Preenchendo estratégia)
-  GENERATING_STRATEGY // IA criando ganchos
-  WAITING_APPROVAL    // Usuário escolhendo
-  GENERATING_ASSETS   // IA criando imagens/vídeos
-  COMPLETED           // Pronto para baixar
-  PUBLISHED           // No Ar
+  DRAFT
+  GENERATING_STRATEGY
+  WAITING_APPROVAL
+  GENERATING_ASSETS
+  COMPLETED
+  PUBLISHED
 }
 
 enum AdPlatform {
-  META      // Facebook/Instagram
+  META
   GOOGLE
   LINKEDIN
 }
@@ -45,13 +44,13 @@ enum AdPlatform {
 model User {
   id        String   @id @default(uuid())
   email     String   @unique
-  password  String   // Hash argon2
+  password  String
   name      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-  
-  // Relacionamentos
+  deletedAt DateTime? // Auditoria: Soft Delete
+
   workspaces WorkspaceMember[]
   aiLogs     AiLog[]
 
@@ -65,8 +64,8 @@ model Workspace {
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  deletedAt   DateTime? // Auditoria: Soft Delete
 
-  // Relacionamentos
   members      WorkspaceMember[]
   campaigns    Campaign[]
   aiLogs       AiLog[]
@@ -93,68 +92,60 @@ model WorkspaceMember {
   @@map("workspace_members")
 }
 
-// --- MODELS PRINCIPAIS (O "Coração" do SaaS) ---
+// --- MODELS PRINCIPAIS ---
 
 model Campaign {
-  id          String            @id @default(uuid())
-  name        String
+  id              String            @id @default(uuid())
+  name            String
+  objective       CampaignObjective
+  platform        AdPlatform        @default(META)
   
-  // --- Estratégia ---
-  objective   CampaignObjective
-  platform    AdPlatform        @default(META)
+  targetAudience  String?           @db.Text
+  keyBenefits     String?           @db.Text
+  brandTone       String?
   
-  // Inputs da IA (O "Prompt" estruturado)
-  targetAudience String?  @db.Text // Quem é o público?
-  keyBenefits    String?  @db.Text // Quais os benefícios?
-  brandTone      String?           // Tom de voz específico desta campanha
-  
-  // --- Controle ---
-  status      CampaignStatus @default(DRAFT)
-  description String?
+  status          CampaignStatus    @default(DRAFT)
+  description     String?           @db.Text
 
-  // --- Relacionamentos ---
-  workspaceId String
-  workspace   Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId     String
+  workspace       Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   
-  createdBy   String // ID do usuário que criou
-  
-  // Os resultados gerados (Variações de anúncios)
-  adCreatives AdCreative[]
-  
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
+  createdBy       String 
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  deletedAt       DateTime?         // Auditoria: Soft Delete
+
+  adCreatives     AdCreative[]
 
   @@index([workspaceId])
+  @@index([deletedAt]) // Índice para performance de queries filtradas
   @@map("campaigns")
 }
 
 model AdCreative {
-  id          String   @id @default(uuid())
+  id           String   @id @default(uuid())
+  name         String
   
-  name        String   // ex: "Variação 1 - Foco em Dor"
+  imageUrl     String?  @db.Text
+  videoUrl     String?  @db.Text
   
-  // --- Ativos Gerados (Outputs) ---
-  imageUrl    String?  @db.Text // URL pública do R2/S3
-  videoUrl    String?  @db.Text // URL do vídeo (futuro)
+  headline     String?  @db.Text
+  primaryText  String?  @db.Text
   
-  headline    String?  @db.Text // Título do anúncio
-  primaryText String?  @db.Text // Texto principal (Copy)
+  aiModel      String?
+  isSelected   Boolean  @default(false)
   
-  // --- Metadados ---
-  aiModel     String?  // ex: "imagen-3.0"
-  isSelected  Boolean  @default(false) // Usuário escolheu esse?
-  
-  // --- Publicação ---
-  facebookAdId String? // ID retornado pela API do Meta após publicar
+  facebookAdId String?
 
-  // Relacionamento
-  campaignId  String
-  campaign    Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt // Adicionado para rastreio
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime? // Auditoria: Soft Delete
 
   @@index([campaignId])
+  @@index([deletedAt])
   @@map("ad_creatives")
 }
 
@@ -165,9 +156,9 @@ model AiLog {
   workspaceId  String
   userId       String
   
-  provider     String   // ex: "GEMINI", "GOOGLE_IMAGEN"
-  model        String   // ex: "gemini-2.0-flash"
-  type         String   // ex: "COPY_GENERATION", "IMAGE_GENERATION"
+  provider     String   
+  model        String   
+  type         String   
   
   inputTokens  Int
   outputTokens Int
@@ -187,20 +178,22 @@ model Integration {
   id           String   @id @default(uuid())
   workspaceId  String
   
-  provider     String   // ex: "META"
-  externalId   String   // ID da conta no Facebook
-  name         String   // Nome da conta
+  provider     String   
+  externalId   String   
+  name         String   
   
-  accessToken  String   @db.Text // Criptografado
+  accessToken  String   @db.Text 
   refreshToken String?  @db.Text
   
   status       String   @default("ACTIVE")
   
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  deletedAt    DateTime? // Auditoria: Soft Delete
 
   workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, provider, externalId])
+  @@index([deletedAt])
   @@map("integrations")
 }
