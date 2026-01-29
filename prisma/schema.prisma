@@ -59,20 +59,32 @@ model User {
 
 model Workspace {
   id          String   @id @default(uuid())
-  name        String
+  name        String   // Nome interno do Workspace
   description String?
+
+  // --- BRAND DNA (Novo) ---
+  brandName       String?   // Nome da Marca para a IA usar nos textos
+  brandVoice      String?   // ex: "Corporativo", "Jovial", "Agressivo"
+  brandColors     String[]  // Array de Strings: ["#FF0000", "#000000"]
+  brandLogoUrl    String?   @db.Text
+  brandWebsite    String?
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  deletedAt   DateTime? // Auditoria: Soft Delete
+  deletedAt   DateTime? 
 
   members      WorkspaceMember[]
   campaigns    Campaign[]
   aiLogs       AiLog[]
   integrations Integration[]
   
+  // Adicione este campo se formos implementar o sistema de créditos do Card 3 depois
+  credits      Int      @default(10) 
+  
   @@map("workspaces")
 }
+
+// Procure pelo model WorkspaceMember e adicione a linha abaixo:
 
 model WorkspaceMember {
   id          String    @id @default(uuid())
@@ -85,6 +97,9 @@ model WorkspaceMember {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   createdAt   DateTime  @default(now())
+  
+  // 👇 ADICIONE ESTA LINHA 👇
+  deletedAt   DateTime? 
 
   @@unique([userId, workspaceId])
   @@index([userId])

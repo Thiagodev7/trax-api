@@ -1,36 +1,37 @@
 {
 	"info": {
-		"name": "Trax SaaS - Marketing AI",
-		"description": "API de Automação de Marketing com processamento assíncrono (BullMQ) e Soft Delete.",
+		"name": "Trax SaaS - Full System (v2)",
+		"description": "Collection completa com Auth, Campanhas (CRUD + Soft Delete), IA Assíncrona e Estratégia de Marca.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"item": [
 		{
-			"name": "01. Authentication",
+			"name": "01. Auth & Setup",
 			"item": [
 				{
-					"name": "Sign Up",
+					"name": "1. Sign Up (Cria Workspace)",
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"ceo@trax.com.br\",\n    \"password\": \"Sup3rS3cr3t!\",\n    \"name\": \"Thiago Ribeiro\"\n}",
+							"raw": "{\n    \"email\": \"admin@trax.com\",\n    \"password\": \"Trax@123456\",\n    \"name\": \"Admin User\"\n}",
 							"options": { "raw": { "language": "json" } }
 						},
 						"url": "{{baseUrl}}/auth/sign-up"
 					}
 				},
 				{
-					"name": "Sign In",
+					"name": "2. Sign In (Gera Token)",
 					"event": [
 						{
 							"listen": "test",
 							"script": {
 								"exec": [
-									"const response = pm.response.json();",
-									"if (response.accessToken) {",
-									"    pm.environment.set(\"jwt_token\", response.accessToken);",
+									"var jsonData = pm.response.json();",
+									"if (jsonData.accessToken) {",
+									"    pm.environment.set(\"jwt_token\", jsonData.accessToken);",
+									"    console.log(\"Token atualizado!\");",
 									"}"
 								],
 								"type": "text/javascript"
@@ -42,7 +43,7 @@
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"email\": \"ceo@trax.com.br\",\n    \"password\": \"Sup3rS3cr3t!\"\n}",
+							"raw": "{\n    \"email\": \"admin@trax.com\",\n    \"password\": \"Trax@123456\"\n}",
 							"options": { "raw": { "language": "json" } }
 						},
 						"url": "{{baseUrl}}/auth/sign-in"
@@ -51,42 +52,93 @@
 			]
 		},
 		{
-			"name": "02. Campaigns",
+			"name": "02. Campaigns Management",
 			"item": [
 				{
-					"name": "Create Campaign (Draft)",
+					"name": "3. Create Campaign",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"var jsonData = pm.response.json();",
+									"if (jsonData.id) {",
+									"    pm.environment.set(\"campaign_id\", jsonData.id);",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"name\": \"Black Friday 2026\",\n    \"objective\": \"SALES\",\n    \"description\": \"Campanha focada em calçados esportivos\"\n}",
+							"raw": "{\n    \"name\": \"Lançamento Verão 2026\",\n    \"objective\": \"SALES\",\n    \"platform\": \"META\",\n    \"description\": \"Campanha focada em moda praia sustentável.\"\n}",
 							"options": { "raw": { "language": "json" } }
 						},
 						"url": "{{baseUrl}}/campaigns"
 					}
 				},
 				{
-					"name": "List Active Campaigns",
+					"name": "4. List All (Active Only)",
 					"request": {
 						"method": "GET",
 						"header": [],
 						"url": "{{baseUrl}}/campaigns"
 					}
+				},
+				{
+					"name": "5. Get One Details",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": "{{baseUrl}}/campaigns/{{campaign_id}}"
+					}
+				},
+				{
+					"name": "6. Update Campaign",
+					"request": {
+						"method": "PATCH",
+						"header": [],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"targetAudience\": \"Jovens de 18-25 anos\",\n    \"brandTone\": \"Divertido e Colorido\"\n}",
+							"options": { "raw": { "language": "json" } }
+						},
+						"url": "{{baseUrl}}/campaigns/{{campaign_id}}"
+					}
+				},
+				{
+					"name": "7. Soft Delete Campaign",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": "{{baseUrl}}/campaigns/{{campaign_id}}"
+					}
 				}
 			]
 		},
 		{
-			"name": "03. AI Engine (BullMQ)",
+			"name": "03. AI Engine (Core)",
 			"item": [
 				{
-					"name": "Generate Image (Async)",
+					"name": "8. Brainstorm Strategy (Brand DNA)",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": "{{baseUrl}}/campaigns/{{campaign_id}}/brainstorm"
+					}
+				},
+				{
+					"name": "9. Generate Image (Async BullMQ)",
 					"request": {
 						"method": "POST",
 						"header": [],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n    \"prompt\": \"Cinematic shot of a futuristic running shoe, neon lights, 8k resolution, highly detailed\",\n    \"campaignId\": \"COLOCAR_ID_AQUI\"\n}",
+							"raw": "{\n    \"prompt\": \"Futuristic sneaker floating in neon void, 8k resolution, cinematic lighting\",\n    \"campaignId\": \"{{campaign_id}}\"\n}",
 							"options": { "raw": { "language": "json" } }
 						},
 						"url": "{{baseUrl}}/ai/generate-image"
@@ -109,6 +161,11 @@
 		{
 			"key": "baseUrl",
 			"value": "http://localhost:3000/v1",
+			"type": "string"
+		},
+		{
+			"key": "campaign_id",
+			"value": "",
 			"type": "string"
 		}
 	]

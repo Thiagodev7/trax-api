@@ -3,7 +3,7 @@ import {
   NotFoundException, 
   ForbiddenException 
 } from '@nestjs/common';
-import { CampaignStatus } from '@prisma/client'; // ✅ Uso de Enum
+import { CampaignStatus } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
@@ -13,32 +13,50 @@ import { ActiveUserData } from '../iam/authentication/decorators/active-user.dec
 export class CampaignsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createCampaignDto: CreateCampaignDto, user: ActiveUserData) {
-    const memberRecord = await this.prisma.workspaceMember.findFirst({
+  // Helper privado para validar acesso ao workspace
+  private async validateUserAccess(user: ActiveUserData, campaignId?: string) {
+    const members = await this.prisma.extended.workspaceMember.findMany({
       where: { userId: user.sub },
       select: { workspaceId: true },
     });
+    
+    if (!members.length) throw new ForbiddenException('Usuário sem workspace.');
+    const workspaceIds = members.map(m => m.workspaceId);
 
-    if (!memberRecord) {
-      throw new NotFoundException('Usuário não pertence a nenhum workspace');
+    if (campaignId) {
+      const campaign = await this.prisma.extended.campaign.findFirst({
+        where: { id: campaignId, workspaceId: { in: workspaceIds } }
+      });
+      if (!campaign) throw new NotFoundException('Campanha não encontrada ou acesso negado.');
+      return campaign;
     }
 
-    return this.prisma.campaign.create({
+    return workspaceIds; // Retorna lista de IDs permitidos para criação/listagem
+  }
+
+  async create(createCampaignDto: CreateCampaignDto, user: ActiveUserData) {
+    const workspaceIds = await this.validateUserAccess(user);
+    // Por padrão, cria no primeiro workspace do usuário (MVP)
+    // No futuro, o DTO pode receber o workspaceId se o usuário tiver múltiplos
+    const targetWorkspaceId = Array.isArray(workspaceIds) ? workspaceIds[0] : null;
+
+    if (!targetWorkspaceId) throw new ForbiddenException('Workspace inválido');
+
+    return this.prisma.extended.campaign.create({
       data: {
         ...createCampaignDto,
-        workspaceId: memberRecord.workspaceId,
+        workspaceId: targetWorkspaceId,
         createdBy: user.sub,
-        status: CampaignStatus.DRAFT, // ✅ Enum
+        status: CampaignStatus.DRAFT,
       },
     });
   }
 
   async findAll(user: ActiveUserData) {
-    return this.prisma.campaign.findMany({
+    const workspaceIds = await this.validateUserAccess(user);
+    return this.prisma.extended.campaign.findMany({
       where: {
-        workspace: {
-          members: { some: { userId: user.sub } },
-        },
+        workspaceId: { in: workspaceIds as string[] },
       },
       orderBy: { createdAt: 'desc' },
       include: {
@@ -48,7 +66,7 @@ export class CampaignsService {
   }
   
   async findOne(id: string, user: ActiveUserData) {
-    const campaign = await this.prisma.campaign.findFirst({
+    const campaign = await this.prisma.extended.campaign.findFirst({
       where: {
         id,
         workspace: { members: { some: { userId: user.sub } } },
@@ -62,36 +80,25 @@ export class CampaignsService {
     return campaign;
   }
 
-  // --- UPDATE OTIMIZADO ---
   async update(id: string, updateDto: UpdateCampaignDto, user: ActiveUserData) {
-    // 1. Busca IDs dos workspaces do usuário (Cacheável futuramente)
-    const userWorkspaces = await this.prisma.workspaceMember.findMany({
-      where: { userId: user.sub },
-      select: { workspaceId: true }
+    await this.validateUserAccess(user, id);
+
+    return this.prisma.extended.campaign.update({
+      where: { id },
+      data: {
+        ...updateDto,
+        // Se o usuário editou campos críticos, podemos voltar status se necessário
+        // status: CampaignStatus.DRAFT 
+      },
     });
-    
-    if (!userWorkspaces.length) throw new ForbiddenException('Usuário sem workspace');
-    
-    const workspaceIds = userWorkspaces.map(w => w.workspaceId);
+  }
 
-    // 2. Tenta atualizar direto com filtro de segurança
-    try {
-      const updatedCampaign = await this.prisma.campaign.update({
-        where: { 
-          id,
-          workspaceId: { in: workspaceIds } // 🔒 Segurança: Só atualiza se for dos workspaces dele
-        },
-        data: {
-          ...updateDto,
-          status: CampaignStatus.WAITING_APPROVAL, // ✅ Enum: Avança o status
-        },
-      });
-      
-      return updatedCampaign;
+  // ✅ NOVO: Delete Seguro (Soft Delete via Extension)
+  async remove(id: string, user: ActiveUserData) {
+    await this.validateUserAccess(user, id);
 
-    } catch (error) {
-      // Se o Prisma não achar o registro (por ID errado ou Workspace errado), lança erro
-      throw new NotFoundException('Campanha não encontrada ou acesso negado.');
-    }
+    return this.prisma.extended.campaign.delete({
+      where: { id },
+    });
   }
 }
