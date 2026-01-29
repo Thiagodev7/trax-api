@@ -1,9 +1,11 @@
-import { NestFactory } from '@nestjs/core';
+import { HttpAdapterHost, NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 // import helmet from 'helmet'; // <--- COMENTADO PROPOSITALMENTE
 import { Logger } from 'nestjs-pino';
+import { TransformInterceptor } from './common/interceptors/transform.interceptor';
+import { AllExceptionsFilter } from './common/filters/http-exception.filter';
 
 import * as basicAuth from 'express-basic-auth';
 
@@ -26,6 +28,23 @@ async function bootstrap() {
     type: VersioningType.URI,
     defaultVersion: '1',
   });
+
+  // ✅ 1. ATIVAR INTERCEPTOR DE RESPOSTA (ENVELOPE)
+  app.useGlobalInterceptors(new TransformInterceptor());
+
+  // ✅ 2. ATIVAR FILTRO DE ERROS GLOBAL
+  // Precisamos do httpAdapter para o filtro funcionar corretamente com o Fastify/Express agnóstico
+  const httpAdapter = app.get(HttpAdapterHost);
+  app.useGlobalFilters(new AllExceptionsFilter(httpAdapter));
+
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({
